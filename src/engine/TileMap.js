@@ -33,26 +33,28 @@ export function pixelToGrid(px, py) {
 
 // Render the full tile map to a canvas context
 export function renderTileMap(ctx, mapData, assets) {
+  const groundImg = assets['tile_ground'];
+
   for (let gy = 0; gy < GRID_SIZE; gy++) {
     for (let gx = 0; gx < GRID_SIZE; gx++) {
-      const tile = mapData.grid[gy]?.[gx];
-      if (!tile) continue;
-
       const px = gx * TILE_SIZE;
       const py = gy * TILE_SIZE;
 
-      // Draw ground under road tiles first
-      if (tile.type === 'road_straight' || tile.type === 'road_corner') {
-        const groundImg = assets['tile_ground'];
-        if (groundImg) {
-          ctx.drawImage(groundImg, px, py, TILE_SIZE, TILE_SIZE);
-        }
+      // Ground fills every cell
+      if (groundImg) {
+        ctx.drawImage(groundImg, px, py, TILE_SIZE, TILE_SIZE);
+      } else {
+        renderFallbackTile(ctx, { type: 'ground' }, px, py);
       }
+
+      // Road tiles overlay on top of ground
+      const tile = mapData.grid[gy]?.[gx];
+      if (!tile) continue;
+      if (tile.type !== 'road_straight' && tile.type !== 'road_corner') continue;
 
       const img = assets[`tile_${tile.type}`];
       if (img) {
         if (tile.rotation && tile.rotation !== 0) {
-          // Rotate around tile center
           ctx.save();
           ctx.translate(px + TILE_SIZE / 2, py + TILE_SIZE / 2);
           ctx.rotate((tile.rotation * Math.PI) / 180);
@@ -62,7 +64,6 @@ export function renderTileMap(ctx, mapData, assets) {
           ctx.drawImage(img, px, py, TILE_SIZE, TILE_SIZE);
         }
       } else {
-        // Fallback: draw colored rectangle
         renderFallbackTile(ctx, tile, px, py);
       }
     }

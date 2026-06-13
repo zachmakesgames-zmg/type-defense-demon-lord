@@ -49,17 +49,18 @@ export function createGameState(mapData, world, level) {
     sites,
     enemies: [],
     projectiles: [],
-    effects: [],
+    effects: [],   // ghost animations
+    graves: {},    // cellKey → { x, y } — one grave per 64×64 cell
     gold: 0,
     baseHP: MAX_HP,
     gameTime: 0,
-    waveIndex: 0,        // next wave to trigger
-    currentWave: 0,      // wave currently active (1-indexed for display)
-    spawnQueue: 0,       // enemies remaining to spawn in current wave
-    nextSpawnTime: 0,    // game time of next enemy spawn
+    waveIndex: 0,
+    currentWave: 0,
+    spawnQueue: 0,
+    nextSpawnTime: 0,
     enemyIdCounter: 0,
     sentenceAccuracy: true,
-    status: 'playing',   // 'playing' | 'won' | 'lost'
+    status: 'playing',
   };
 }
 
@@ -115,6 +116,28 @@ export function updateGame(state, dt) {
       state.baseHP -= BASE_DAMAGE_PER_SECOND * dt;
     }
   }
+
+  // Handle dead enemies — spawn ghost, place grave
+  for (const enemy of state.enemies) {
+    if (enemy.hp <= 0) {
+      const pos = getPositionAlongPath(state.segments, state.totalLength, enemy.progress);
+      // Ghost effect: rises and fades over 1.2 seconds
+      state.effects.push({ type: 'ghost', x: pos.x, y: pos.y, timer: 1.2, maxTimer: 1.2 });
+      // One grave per 64×64 cell
+      const cellKey = `${Math.floor(pos.x / TILE_SIZE)},${Math.floor(pos.y / TILE_SIZE)}`;
+      if (!state.graves[cellKey]) {
+        const cx = Math.floor(pos.x / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+        const cy = Math.floor(pos.y / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+        state.graves[cellKey] = { x: cx, y: cy };
+      }
+    }
+  }
+
+  // Update ghost effects
+  state.effects = state.effects.filter(e => {
+    e.timer -= dt;
+    return e.timer > 0;
+  });
 
   // Remove dead enemies
   state.enemies = state.enemies.filter(e => e.hp > 0);

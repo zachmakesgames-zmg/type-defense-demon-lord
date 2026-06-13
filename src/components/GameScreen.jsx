@@ -68,8 +68,7 @@ export default function GameScreen({ world, level, onBack, onRestart }) {
     let cancelled = false;
 
     async function init() {
-      const worldInfo = getWorld(world);
-      const biome = worldInfo?.biome || 'forest';
+      const worldInfo = getWorld(world) || { id: world, biome: 'forest', landTile: 'Land_Grass' };
 
       // Load map data
       let mapData;
@@ -88,7 +87,7 @@ export default function GameScreen({ world, level, onBack, onRestart }) {
       }
 
       // Load assets
-      const assets = await loadLevelAssets(biome, (p) => {
+      const assets = await loadLevelAssets(worldInfo, (p) => {
         if (!cancelled) setLoadProgress(p);
       });
 
