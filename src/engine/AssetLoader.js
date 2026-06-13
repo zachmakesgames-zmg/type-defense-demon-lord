@@ -1,4 +1,5 @@
 // ─── Asset Loader ────────────────────────────────────────────────
+const BASE = import.meta.env.BASE_URL; // e.g. '/type-defense-demon-lord/' on GitHub Pages
 const imageCache = new Map();
 
 function loadImage(path) {
@@ -29,10 +30,10 @@ function buildManifest(worldDef) {
   const { landTile, id: worldId } = worldDef;
 
   // Ground tile (fills every cell)
-  items.push({ key: 'tile_ground',       path: `/assets/land/${landTile}.png` });
+  items.push({ key: 'tile_ground',       path: `${BASE}assets/land/${landTile}.png` });
   // Road tiles (drawn on top of ground)
-  items.push({ key: 'tile_road_straight', path: `/assets/land/Road_Straight.png` });
-  items.push({ key: 'tile_road_corner',   path: `/assets/land/Road_Curve.png` });
+  items.push({ key: 'tile_road_straight', path: `${BASE}assets/land/Road_Straight.png` });
+  items.push({ key: 'tile_road_corner',   path: `${BASE}assets/land/Road_Curve.png` });
 
   // Tower sprites
   const towers = [
@@ -44,7 +45,7 @@ function buildManifest(worldDef) {
     ['tower_lightning_warlock','Tower_Wizard'],
   ];
   for (const [key, file] of towers) {
-    items.push({ key, path: `/assets/towers/${file}.png` });
+    items.push({ key, path: `${BASE}assets/towers/${file}.png` });
   }
 
   // Projectile sprites
@@ -56,7 +57,7 @@ function buildManifest(worldDef) {
     ['proj_rock',      'Projectile_Rock'],
   ];
   for (const [key, file] of projectiles) {
-    items.push({ key, path: `/assets/towers/${file}.png` });
+    items.push({ key, path: `${BASE}assets/towers/${file}.png` });
   }
 
   // Enemy unit sprites
@@ -68,7 +69,7 @@ function buildManifest(worldDef) {
     ['enemy_zeppelin',    'Unit_Wizard'],
   ];
   for (const [key, file] of enemies) {
-    items.push({ key, path: `/assets/enemies/${file}.png` });
+    items.push({ key, path: `${BASE}assets/enemies/${file}.png` });
   }
 
   // Death / grave effects
@@ -79,8 +80,8 @@ function buildManifest(worldDef) {
   items.push({ key: 'tower_site', path: '/assets/enemies/Construction_Site.png' });
 
   // Keep and Demon Lord (world-specific)
-  items.push({ key: 'keep',       path: `/assets/keeps/Keep_L${worldId}.png` });
-  items.push({ key: 'demon_lord', path: `/assets/demon_lord/DemonLord_L${worldId}.png` });
+  items.push({ key: 'keep',       path: `${BASE}assets/keeps/Keep_L${worldId}.png` });
+  items.push({ key: 'demon_lord', path: `${BASE}assets/demon_lord/DemonLord_L${worldId}.png` });
 
   return items;
 }
