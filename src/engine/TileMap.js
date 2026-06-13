@@ -54,10 +54,18 @@ export function renderTileMap(ctx, mapData, assets) {
 
       const img = assets[`tile_${tile.type}`];
       if (img) {
-        if (tile.rotation && tile.rotation !== 0) {
+        // Corner tile default orientation connects south+east (6→3 o'clock).
+        // The level data encodes corners with rotations designed for a north+east base,
+        // so apply the corrective formula: effective = (270 - stored + 360) % 360.
+        const rawRot = tile.rotation || 0;
+        const rot = tile.type === 'road_corner'
+          ? (270 - rawRot + 360) % 360
+          : rawRot;
+
+        if (rot !== 0) {
           ctx.save();
           ctx.translate(px + TILE_SIZE / 2, py + TILE_SIZE / 2);
-          ctx.rotate((tile.rotation * Math.PI) / 180);
+          ctx.rotate((rot * Math.PI) / 180);
           ctx.drawImage(img, -TILE_SIZE / 2, -TILE_SIZE / 2, TILE_SIZE, TILE_SIZE);
           ctx.restore();
         } else {

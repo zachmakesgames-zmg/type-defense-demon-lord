@@ -31,6 +31,8 @@ export const TOWERS = {
     color: '#c8a96e',
     label: 'ARCHER',
     asset: 'skeleton_archer.png',
+    projectileSprite: 'proj_arrow',
+    projectileSpeed: 350,
   },
   geyser: {
     id: 'geyser',
@@ -48,6 +50,8 @@ export const TOWERS = {
     color: '#ff6535',
     label: 'GEYSER',
     asset: 'molten_geyser.png',
+    projectileSprite: 'proj_rock',
+    projectileSpeed: 280,
   },
   dragon: {
     id: 'dragon',
@@ -66,6 +70,8 @@ export const TOWERS = {
     color: '#cc3333',
     label: 'DRAGON',
     asset: 'dragon_perch.png',
+    projectileSprite: 'proj_fire',
+    projectileSpeed: 400,
   },
   tree: {
     id: 'tree',
@@ -83,6 +89,8 @@ export const TOWERS = {
     color: '#33cc66',
     label: 'TREE',
     asset: 'tree_of_dead.png',
+    projectileSprite: 'proj_gas',
+    projectileSpeed: 200,
   },
   gravity: {
     id: 'gravity',
@@ -117,6 +125,8 @@ export const TOWERS = {
     color: '#4488ff',
     label: 'WARLOCK',
     asset: 'lightning_warlock.png',
+    projectileSprite: 'proj_lightning',
+    projectileSpeed: 500,
   },
 };
 

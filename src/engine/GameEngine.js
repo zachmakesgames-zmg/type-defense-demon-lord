@@ -139,6 +139,43 @@ export function updateGame(state, dt) {
     return e.timer > 0;
   });
 
+  // ── Update projectiles ─────────────────────────────────────────
+  const remainingProjectiles = [];
+  for (const proj of state.projectiles) {
+    const target = state.enemies.find(e => e.id === proj.targetId);
+    if (!target || target.hp <= 0) continue; // target gone, discard
+
+    const targetPos = getPositionAlongPath(state.segments, state.totalLength, target.progress);
+    proj.angle = Math.atan2(targetPos.y - proj.y, targetPos.x - proj.x);
+    proj.x += Math.cos(proj.angle) * proj.speed * dt;
+    proj.y += Math.sin(proj.angle) * proj.speed * dt;
+
+    const dist = distance({ x: proj.x, y: proj.y }, targetPos);
+    if (dist < 12) {
+      // Hit — apply damage
+      target.hp -= calculateDamage(proj.damage, target, proj.towerDef);
+      target.flashTimer = 0.08;
+      if (proj.dot) target.dotTimer = proj.dot;
+
+      // Splash
+      if (proj.splash) {
+        const splashPx = splashToPixels(proj.splash);
+        for (const enemy of state.enemies) {
+          if (enemy.id === target.id) continue;
+          if (enemy.atBase) continue;
+          const epos = getPositionAlongPath(state.segments, state.totalLength, enemy.progress);
+          if (distance(epos, targetPos) <= splashPx) {
+            enemy.hp -= calculateDamage(proj.damage * 0.5, enemy, proj.towerDef);
+            enemy.flashTimer = 0.08;
+          }
+        }
+      }
+    } else {
+      remainingProjectiles.push(proj);
+    }
+  }
+  state.projectiles = remainingProjectiles;
+
   // Remove dead enemies
   state.enemies = state.enemies.filter(e => e.hp > 0);
 
@@ -154,80 +191,57 @@ export function updateGame(state, dt) {
     const rangePx = rangeToPixels(towerDef.range);
 
     if (towerDef.aoe) {
-      // Area effect: affect all enemies in range
+      // AOE: instantly affect all enemies in range (no projectile)
       let hitAny = false;
       for (const enemy of state.enemies) {
         if (enemy.atBase) continue;
         const pos = getPositionAlongPath(state.segments, state.totalLength, enemy.progress);
         const dist = distance({ x: site.x, y: site.y }, pos);
-
         if (dist <= rangePx) {
-          // Check immunity
           if (enemy.immunities.includes(site.tower.type)) continue;
-
           hitAny = true;
-
           if (towerDef.slow) {
             enemy.slowMultiplier = 1 - towerDef.slow;
             enemy.slowTimer = rofToSeconds(towerDef.rof) + 0.1;
           }
-          if (towerDef.dot) {
-            enemy.dotTimer = towerDef.dot;
-          }
+          if (towerDef.dot) enemy.dotTimer = towerDef.dot;
           if (towerDef.damage > 0) {
-            const dmg = calculateDamage(damageToHP(towerDef.damage), enemy, towerDef);
-            enemy.hp -= dmg;
+            enemy.hp -= calculateDamage(damageToHP(towerDef.damage), enemy, towerDef);
             enemy.flashTimer = 0.08;
           }
         }
       }
       site.tower.cooldown = hitAny ? rofToSeconds(towerDef.rof) : 0.05;
     } else {
-      // Single target: find closest enemy to base within range
+      // Single target: spawn a projectile toward the furthest enemy in range
       let target = null;
       let bestProgress = -1;
-
       for (const enemy of state.enemies) {
         if (enemy.atBase) continue;
         if (enemy.immunities.includes(site.tower.type)) continue;
-
         const pos = getPositionAlongPath(state.segments, state.totalLength, enemy.progress);
         const dist = distance({ x: site.x, y: site.y }, pos);
-
         if (dist <= rangePx && enemy.progress > bestProgress) {
           bestProgress = enemy.progress;
           target = enemy;
         }
       }
-
       if (target) {
-        const dmg = calculateDamage(damageToHP(towerDef.damage), target, towerDef);
-        target.hp -= dmg;
-        target.flashTimer = 0.08;
-
-        if (towerDef.dot) {
-          target.dotTimer = towerDef.dot;
-        }
-
-        // Splash damage
-        if (towerDef.splash) {
-          const splashPx = splashToPixels(towerDef.splash);
-          const targetPos = getPositionAlongPath(state.segments, state.totalLength, target.progress);
-
-          for (const enemy of state.enemies) {
-            if (enemy.id === target.id) continue;
-            if (enemy.atBase) continue;
-            if (enemy.immunities.includes(site.tower.type)) continue;
-
-            const pos = getPositionAlongPath(state.segments, state.totalLength, enemy.progress);
-            if (distance(pos, targetPos) <= splashPx) {
-              const splashDmg = calculateDamage(damageToHP(towerDef.damage) * 0.5, enemy, towerDef);
-              enemy.hp -= splashDmg;
-              enemy.flashTimer = 0.08;
-            }
-          }
-        }
-
+        const targetPos = getPositionAlongPath(state.segments, state.totalLength, target.progress);
+        state.projectiles.push({
+          id: state.enemyIdCounter++,
+          x: site.x,
+          y: site.y,
+          targetId: target.id,
+          speed: towerDef.projectileSpeed || 300,
+          damage: damageToHP(towerDef.damage),
+          dot: towerDef.dot || 0,
+          splash: towerDef.splash || 0,
+          towerType: site.tower.type,
+          towerDef,
+          sprite: towerDef.projectileSprite || 'proj_arrow',
+          angle: Math.atan2(targetPos.y - site.y, targetPos.x - site.x),
+        });
         site.tower.cooldown = rofToSeconds(towerDef.rof);
       }
     }

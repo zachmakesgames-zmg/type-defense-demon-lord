@@ -39,7 +39,10 @@ export class Renderer {
     // Draw enemies
     this.drawEnemies(ctx, state);
 
-    // Draw ghost effects (above enemies)
+    // Draw projectiles (above enemies)
+    this.drawProjectiles(ctx, state);
+
+    // Draw ghost effects (above projectiles)
     this.drawGhosts(ctx, state);
 
     // Draw keep and demon lord (above most things, near base)
@@ -181,6 +184,25 @@ export class Renderer {
       ctx.fillRect(barX, barY, barW, barH);
       ctx.fillStyle = hpPct > 0.5 ? '#44ff44' : hpPct > 0.25 ? '#ffff44' : '#ff4444';
       ctx.fillRect(barX, barY, barW * hpPct, barH);
+    }
+  }
+
+  drawProjectiles(ctx, state) {
+    for (const proj of state.projectiles) {
+      const img = this.assets[proj.sprite];
+      const size = 16;
+      ctx.save();
+      ctx.translate(proj.x, proj.y);
+      ctx.rotate(proj.angle);
+      if (img) {
+        ctx.drawImage(img, -size / 2, -size / 2, size, size);
+      } else {
+        ctx.fillStyle = '#ffff00';
+        ctx.beginPath();
+        ctx.arc(0, 0, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
     }
   }
 
