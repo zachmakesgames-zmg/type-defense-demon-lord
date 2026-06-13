@@ -117,33 +117,11 @@ export function updateGame(state, dt) {
     }
   }
 
-  // Handle dead enemies — spawn ghost, place grave
-  for (const enemy of state.enemies) {
-    if (enemy.hp <= 0) {
-      const pos = getPositionAlongPath(state.segments, state.totalLength, enemy.progress);
-      // Ghost effect: rises and fades over 1.2 seconds
-      state.effects.push({ type: 'ghost', x: pos.x, y: pos.y, timer: 1.2, maxTimer: 1.2 });
-      // One grave per 64×64 cell
-      const cellKey = `${Math.floor(pos.x / TILE_SIZE)},${Math.floor(pos.y / TILE_SIZE)}`;
-      if (!state.graves[cellKey]) {
-        const cx = Math.floor(pos.x / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
-        const cy = Math.floor(pos.y / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
-        state.graves[cellKey] = { x: cx, y: cy };
-      }
-    }
-  }
-
-  // Update ghost effects
-  state.effects = state.effects.filter(e => {
-    e.timer -= dt;
-    return e.timer > 0;
-  });
-
-  // ── Update projectiles ─────────────────────────────────────────
+  // ── Update projectiles (damage must land BEFORE death check) ───
   const remainingProjectiles = [];
   for (const proj of state.projectiles) {
     const target = state.enemies.find(e => e.id === proj.targetId);
-    if (!target || target.hp <= 0) continue; // target gone, discard
+    if (!target || target.hp <= 0) continue;
 
     const targetPos = getPositionAlongPath(state.segments, state.totalLength, target.progress);
     proj.angle = Math.atan2(targetPos.y - proj.y, targetPos.x - proj.x);
@@ -152,17 +130,13 @@ export function updateGame(state, dt) {
 
     const dist = distance({ x: proj.x, y: proj.y }, targetPos);
     if (dist < 12) {
-      // Hit — apply damage
       target.hp -= calculateDamage(proj.damage, target, proj.towerDef);
       target.flashTimer = 0.08;
       if (proj.dot) target.dotTimer = proj.dot;
-
-      // Splash
       if (proj.splash) {
         const splashPx = splashToPixels(proj.splash);
         for (const enemy of state.enemies) {
-          if (enemy.id === target.id) continue;
-          if (enemy.atBase) continue;
+          if (enemy.id === target.id || enemy.atBase) continue;
           const epos = getPositionAlongPath(state.segments, state.totalLength, enemy.progress);
           if (distance(epos, targetPos) <= splashPx) {
             enemy.hp -= calculateDamage(proj.damage * 0.5, enemy, proj.towerDef);
@@ -175,6 +149,24 @@ export function updateGame(state, dt) {
     }
   }
   state.projectiles = remainingProjectiles;
+
+  // Handle dead enemies — spawn ghost + place grave AFTER damage lands
+  for (const enemy of state.enemies) {
+    if (enemy.hp <= 0) {
+      const pos = getPositionAlongPath(state.segments, state.totalLength, enemy.progress);
+      state.effects.push({ type: 'ghost', x: pos.x, y: pos.y, timer: 1.2, maxTimer: 1.2 });
+      const cellKey = `${Math.floor(pos.x / TILE_SIZE)},${Math.floor(pos.y / TILE_SIZE)}`;
+      if (!state.graves[cellKey]) {
+        state.graves[cellKey] = {
+          x: Math.floor(pos.x / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2,
+          y: Math.floor(pos.y / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2,
+        };
+      }
+    }
+  }
+
+  // Update ghost timers
+  state.effects = state.effects.filter(e => { e.timer -= dt; return e.timer > 0; });
 
   // Remove dead enemies
   state.enemies = state.enemies.filter(e => e.hp > 0);
