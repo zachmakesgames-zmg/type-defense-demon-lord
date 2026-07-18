@@ -72,12 +72,17 @@ function buildManifest(worldDef) {
     items.push({ key, path: `${BASE}assets/enemies/${file}.png` });
   }
 
+  // Scenery decorations (biome-specific)
+  for (const name of (worldDef.scenery || [])) {
+    items.push({ key: `scenery_${name}`, path: `${BASE}assets/scenery/${name}.png` });
+  }
+
   // Death / grave effects
-  items.push({ key: 'ghost', path: '/assets/enemies/Ghost.png' });
-  items.push({ key: 'grave', path: '/assets/enemies/Grave.png' });
+  items.push({ key: 'ghost', path: `${BASE}assets/enemies/Ghost.png` });
+  items.push({ key: 'grave', path: `${BASE}assets/enemies/Grave.png` });
 
   // Construction site marker
-  items.push({ key: 'tower_site', path: '/assets/enemies/Construction_Site.png' });
+  items.push({ key: 'tower_site', path: `${BASE}assets/enemies/Construction_Site.png` });
 
   // Keep and Demon Lord (world-specific)
   items.push({ key: 'keep',       path: `${BASE}assets/keeps/Keep_L${worldId}.png` });

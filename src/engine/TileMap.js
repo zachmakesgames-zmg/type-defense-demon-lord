@@ -31,9 +31,44 @@ export function pixelToGrid(px, py) {
   };
 }
 
+// Seeded pseudo-random — deterministic per cell so scenery is stable across renders
+function seededRand(seed) {
+  let s = seed;
+  return () => {
+    s = (s * 1664525 + 1013904223) & 0xffffffff;
+    return (s >>> 0) / 0xffffffff;
+  };
+}
+
 // Render the full tile map to a canvas context
 export function renderTileMap(ctx, mapData, assets) {
   const groundImg = assets['tile_ground'];
+
+  // Collect scenery images available for this world
+  const sceneryImgs = Object.entries(assets)
+    .filter(([k, v]) => k.startsWith('scenery_') && v)
+    .map(([, v]) => v);
+
+  // Build set of non-ground cells (road, tower site reserved, base)
+  const roadCells = new Set();
+  for (let gy = 0; gy < GRID_SIZE; gy++) {
+    for (let gx = 0; gx < GRID_SIZE; gx++) {
+      const tile = mapData.grid[gy]?.[gx];
+      if (tile && tile.type !== 'ground' && tile.type !== 'decoration' && tile.type !== 'boulder') {
+        roadCells.add(`${gx},${gy}`);
+      }
+    }
+  }
+  // Also exclude tower sites and the 2×2 base area
+  for (const site of (mapData.towerSites || [])) {
+    roadCells.add(`${site.gx},${site.gy}`);
+  }
+  if (mapData.basePosition) {
+    const { gx, gy } = mapData.basePosition;
+    for (let dy = 0; dy < 2; dy++)
+      for (let dx = 0; dx < 2; dx++)
+        roadCells.add(`${gx + dx},${gy + dy}`);
+  }
 
   for (let gy = 0; gy < GRID_SIZE; gy++) {
     for (let gx = 0; gx < GRID_SIZE; gx++) {
@@ -50,7 +85,19 @@ export function renderTileMap(ctx, mapData, assets) {
       // Road tiles overlay on top of ground
       const tile = mapData.grid[gy]?.[gx];
       if (!tile) continue;
-      if (tile.type !== 'road_straight' && tile.type !== 'road_corner') continue;
+      if (tile.type !== 'road_straight' && tile.type !== 'road_corner') {
+        // Scatter scenery on open ground cells (~18% chance)
+        if (sceneryImgs.length > 0 && !roadCells.has(`${gx},${gy}`)) {
+          const rand = seededRand(gy * 31 + gx * 17 + 9001);
+          if (rand() < 0.18) {
+            const img = sceneryImgs[Math.floor(rand() * sceneryImgs.length)];
+            const size = TILE_SIZE * 0.75;
+            const offset = (TILE_SIZE - size) / 2;
+            ctx.drawImage(img, px + offset, py + offset, size, size);
+          }
+        }
+        continue;
+      }
 
       const img = assets[`tile_${tile.type}`];
       if (img) {

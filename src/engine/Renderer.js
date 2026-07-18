@@ -36,6 +36,9 @@ export class Renderer {
     // Draw placed towers
     this.drawTowers(ctx, state);
 
+    // Draw dragon breath tiles (below enemies so fire appears under units)
+    this.drawDragonBreaths(ctx, state);
+
     // Draw enemies
     this.drawEnemies(ctx, state);
 
@@ -47,14 +50,26 @@ export class Renderer {
 
     // Draw keep and demon lord (above most things, near base)
     this.drawBase(ctx, state);
+
+    // Dev debug overlay — backtick toggle, never visible in production
+    if (state.debugMode) this.drawDebugOverlay(ctx, state);
   }
 
   drawGraves(ctx, state) {
     const img = this.assets['grave'];
-    if (!img) return;
-    const size = 32;
+    const size = 48;
     for (const grave of Object.values(state.graves)) {
-      ctx.drawImage(img, grave.x - size / 2, grave.y - size / 2, size, size);
+      if (img) {
+        ctx.drawImage(img, grave.x - size / 2, grave.y - size / 2, size, size);
+      } else {
+        // Fallback cross marker
+        ctx.strokeStyle = '#888866';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(grave.x, grave.y - 12); ctx.lineTo(grave.x, grave.y + 12);
+        ctx.moveTo(grave.x - 8, grave.y - 6); ctx.lineTo(grave.x + 8, grave.y - 6);
+        ctx.stroke();
+      }
     }
   }
 
@@ -73,10 +88,14 @@ export class Renderer {
         ctx.strokeRect(site.x - 24, site.y - 24, 48, 48);
       }
 
-      ctx.fillStyle = '#88ff88';
-      ctx.font = 'bold 12px monospace';
+      // Code text — large, outlined for legibility over the construction tile
+      ctx.font = 'bold 36px monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
+      ctx.strokeStyle = '#000000cc';
+      ctx.lineWidth = 4;
+      ctx.strokeText(site.code, site.x, site.y);
+      ctx.fillStyle = '#ffff00';
       ctx.fillText(site.code, site.x, site.y);
     }
   }
@@ -124,10 +143,82 @@ export class Renderer {
     }
   }
 
+  drawDragonBreaths(ctx, state) {
+    const t = state.gameTime;
+    const fireImg = this.assets['proj_fire'];
+
+    for (const site of state.sites) {
+      if (!site.tower?.breathTile || site.tower.breathTimer <= 0) continue;
+      const { gx, gy } = site.tower.breathTile;
+
+      // Tile center (target)
+      const tx = gx * TILE_SIZE + TILE_SIZE / 2;
+      const ty = gy * TILE_SIZE + TILE_SIZE / 2;
+      // Tower center (source)
+      const sx = site.x;
+      const sy = site.y;
+
+      const dx = tx - sx;
+      const dy = ty - sy;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      const angle = Math.atan2(dy, dx);
+
+      ctx.save();
+
+      // Fire stream — 6 sprites flowing from tower toward tile
+      const NUM_SPRITES = 6;
+      const SPRITE_SIZE = 28;
+      for (let i = 0; i < NUM_SPRITES; i++) {
+        // Each sprite travels along the beam; offset animates forward over time
+        const frac = ((i / NUM_SPRITES) + (t * 3) % 1) % 1;
+        const bx = sx + dx * frac;
+        const by = sy + dy * frac;
+
+        // Fade out near source, bright near target
+        const alpha = 0.4 + frac * 0.6;
+        const scale = 0.6 + frac * 0.6;
+        const sz = SPRITE_SIZE * scale;
+
+        ctx.globalAlpha = alpha;
+        ctx.save();
+        ctx.translate(bx, by);
+        ctx.rotate(angle);
+        if (fireImg) {
+          ctx.drawImage(fireImg, -sz / 2, -sz / 2, sz, sz);
+        } else {
+          ctx.fillStyle = `hsl(${20 + frac * 20}, 100%, ${50 + frac * 20}%)`;
+          ctx.beginPath();
+          ctx.arc(0, 0, sz / 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      // Tile impact glow
+      const pulse = 0.6 + 0.4 * Math.sin(t * 25);
+      ctx.globalAlpha = pulse * 0.7;
+      ctx.fillStyle = '#ff4400';
+      ctx.fillRect(gx * TILE_SIZE, gy * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      ctx.globalAlpha = pulse * 0.35;
+      ctx.fillStyle = '#ffcc00';
+      ctx.fillRect(gx * TILE_SIZE + 6, gy * TILE_SIZE + 6, TILE_SIZE - 12, TILE_SIZE - 12);
+
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+  }
+
   drawEnemies(ctx, state) {
     const t = state.gameTime;
 
-    for (const enemy of state.enemies) {
+    // Sort so lower-y enemies (closer to screen bottom) draw last = on top
+    const sorted = [...state.enemies].sort((a, b) => {
+      const pa = getPositionAlongPath(state.segments, state.totalLength, a.progress);
+      const pb = getPositionAlongPath(state.segments, state.totalLength, b.progress);
+      return pa.y - pb.y;
+    });
+
+    for (const enemy of sorted) {
       const pos = getPositionAlongPath(state.segments, state.totalLength, enemy.progress);
 
       // Wobble: subtle side-to-side + vertical bob to imply walking
@@ -208,21 +299,21 @@ export class Renderer {
 
   drawGhosts(ctx, state) {
     const img = this.assets['ghost'];
-    const size = 32;
+    const size = 56;
 
     for (const effect of state.effects) {
       if (effect.type !== 'ghost') continue;
-      const progress = 1 - effect.timer / effect.maxTimer; // 0→1
-      const riseY = effect.y - progress * 40;             // rises 40px
-      const alpha = 1 - progress;                          // fades out
+      const progress = 1 - effect.timer / effect.maxTimer; // 0→1 over lifetime
+      const riseY = effect.y - progress * 60;              // rises 60px
+      const alpha = Math.max(0, 1 - progress * 1.2);       // fades out
 
       ctx.globalAlpha = alpha;
       if (img) {
         ctx.drawImage(img, effect.x - size / 2, riseY - size / 2, size, size);
       } else {
-        ctx.fillStyle = '#aaaaff';
+        ctx.fillStyle = '#ccccff';
         ctx.beginPath();
-        ctx.arc(effect.x, riseY, 10, 0, Math.PI * 2);
+        ctx.arc(effect.x, riseY, 18, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.globalAlpha = 1;
@@ -259,5 +350,28 @@ export class Renderer {
     if (dlImg) {
       ctx.drawImage(dlImg, bx - dlSize / 2, by + keepSize / 2 - 8, dlSize, dlSize);
     }
+  }
+
+  drawDebugOverlay(ctx, state) {
+    const d = state.debugData;
+    if (!d) return;
+    const rows = d.towers.length;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.78)';
+    ctx.fillRect(4, 4, 344, 30 + rows * 18 + 22);
+    ctx.font = '13px monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = '#00ff88';
+    ctx.fillText(`[DEBUG] gold:${Math.floor(d.gold)}  HP:${Math.floor(d.baseHP)}  g/s≈${d.goldPerSec}`, 10, 10);
+    let y = 28;
+    for (const t of d.towers) {
+      ctx.fillStyle = '#ffff66';
+      ctx.fillText(`  ${t.type.padEnd(8)} DPS:${t.dps}  cost:${t.cost}`, 10, y);
+      y += 18;
+    }
+    ctx.fillStyle = '#aaffff';
+    ctx.fillText(`boardCost: ${d.boardCost}`, 10, y);
+    ctx.restore();
   }
 }

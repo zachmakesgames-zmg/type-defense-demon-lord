@@ -8,10 +8,14 @@ import { buildWeightedPool, generateCode, generateSentence } from '../constants/
 import { buildSegments, getPositionAlongPath } from '../utils/pathfinding.js';
 import { distance } from '../utils/math.js';
 import { TILE_SIZE } from './TileMap.js';
+import { BALANCE } from '../config/balance.js';
 
-const MAX_GOLD = 3000;
-const MAX_HP = 100;
-const BASE_DAMAGE_PER_SECOND = 1;
+const MAX_GOLD             = BALANCE.GOLD_MAX;
+const MAX_HP               = BALANCE.BASE_MAX_HP;
+const BASE_DAMAGE_PER_SECOND = BALANCE.BASE_DAMAGE_PER_SEC;
+
+// Prefer explicit fireInterval override over rof formula
+const fireInterval = (towerDef) => towerDef.fireInterval ?? rofToSeconds(towerDef.rof);
 
 export function createGameState(mapData, world, level) {
   const keyPool = buildWeightedPool(world, level);
@@ -57,10 +61,14 @@ export function createGameState(mapData, world, level) {
     waveIndex: 0,
     currentWave: 0,
     spawnQueue: 0,
+    spawnGroupSize: 0,
+    spawnGroupRemaining: 0,
     nextSpawnTime: 0,
     enemyIdCounter: 0,
     sentenceAccuracy: true,
     status: 'playing',
+    debugMode: false,
+    debugData: null,
   };
 }
 
@@ -74,18 +82,28 @@ export function updateGame(state, dt) {
     const wave = WAVES[state.waveIndex];
     if (state.gameTime >= wave.startTime && state.spawnQueue === 0) {
       state.spawnQueue = wave.enemyCount;
+      state.spawnGroupSize = wave.groupSize || wave.enemyCount;
+      state.spawnGroupRemaining = state.spawnGroupSize;
       state.nextSpawnTime = state.gameTime;
       state.currentWave = state.waveIndex + 1;
       state.waveIndex++;
     }
   }
 
-  // Spawn enemies from queue
+  // Spawn enemies from queue — group-burst mode
   if (state.spawnQueue > 0 && state.gameTime >= state.nextSpawnTime) {
     spawnEnemy(state);
     state.spawnQueue--;
-    const interval = getSpawnInterval(state.waveIndex - 1);
-    state.nextSpawnTime = state.gameTime + interval;
+    state.spawnGroupRemaining--;
+
+    if (state.spawnGroupRemaining <= 0 && state.spawnQueue > 0) {
+      // End of group — pause before next burst
+      state.spawnGroupRemaining = Math.min(state.spawnGroupSize, state.spawnQueue);
+      state.nextSpawnTime = state.gameTime + BALANCE.GROUP_GAP;
+    } else {
+      // Inside a group — tight interval
+      state.nextSpawnTime = state.gameTime + BALANCE.SPAWN_INTERVAL;
+    }
   }
 
   // ── Update enemies ─────────────────────────────────────────────
@@ -96,10 +114,11 @@ export function updateGame(state, dt) {
       if (enemy.slowTimer <= 0) enemy.slowMultiplier = 1;
     }
 
-    // Damage over time
+    // Damage over time (10 ticks/sec; armor ignored when flagged by poison source)
     if (enemy.dotTimer > 0) {
       enemy.dotTimer -= dt;
-      enemy.hp -= 10 * dt; // 1 point per tick, 10 ticks per second
+      const rawTick = 10 * dt;
+      enemy.hp -= enemy.dotIgnoresArmor ? rawTick : rawTick * (1 - (enemy.defense || 0));
     }
 
     // Flash timer
@@ -132,7 +151,11 @@ export function updateGame(state, dt) {
     if (dist < 12) {
       target.hp -= calculateDamage(proj.damage, target, proj.towerDef);
       target.flashTimer = 0.08;
-      if (proj.dot) target.dotTimer = proj.dot;
+      // Flame DoT only applies to enemies flagged flameBonus (Siege Weapon)
+      if (proj.dot && (!proj.towerDef.isFlame || target.flameBonus)) {
+        target.dotTimer = proj.dot;
+        target.dotIgnoresArmor = !!proj.towerDef.isFlame;
+      }
       if (proj.splash) {
         const splashPx = splashToPixels(proj.splash);
         for (const enemy of state.enemies) {
@@ -154,7 +177,7 @@ export function updateGame(state, dt) {
   for (const enemy of state.enemies) {
     if (enemy.hp <= 0) {
       const pos = getPositionAlongPath(state.segments, state.totalLength, enemy.progress);
-      state.effects.push({ type: 'ghost', x: pos.x, y: pos.y, timer: 1.2, maxTimer: 1.2 });
+      state.effects.push({ type: 'ghost', x: pos.x, y: pos.y, timer: 2.0, maxTimer: 2.0 });
       const cellKey = `${Math.floor(pos.x / TILE_SIZE)},${Math.floor(pos.y / TILE_SIZE)}`;
       if (!state.graves[cellKey]) {
         state.graves[cellKey] = {
@@ -177,6 +200,56 @@ export function updateGame(state, dt) {
     const towerDef = TOWERS[site.tower.type];
     if (!towerDef) continue;
 
+    // ── Dragon tile-breath ─────────────────────────────────────
+    if (towerDef.tileBreath) {
+      const tw = site.tower;
+
+      // Currently breathing — damage everything on the locked tile
+      if (tw.breathTimer > 0) {
+        tw.breathTimer -= dt;
+        // Tile center in pixels
+        const tileCx = tw.breathTile.gx * TILE_SIZE + TILE_SIZE / 2;
+        const tileCy = tw.breathTile.gy * TILE_SIZE + TILE_SIZE / 2;
+        const hitRadius = TILE_SIZE * 0.75; // slightly larger than half-tile so edge walkers get hit
+        for (const enemy of state.enemies) {
+          if (enemy.atBase) continue;
+          const pos = getPositionAlongPath(state.segments, state.totalLength, enemy.progress);
+          if (distance(pos, { x: tileCx, y: tileCy }) <= hitRadius) {
+            enemy.hp -= towerDef.breathDamagePerSec * dt;
+            enemy.flashTimer = 0.08;
+          }
+        }
+        if (tw.breathTimer <= 0) {
+          tw.breathTile = null;
+          tw.cooldown = towerDef.breathCooldown;
+        }
+        continue;
+      }
+
+      // On cooldown — wait
+      tw.cooldown -= dt;
+      if (tw.cooldown > 0) continue;
+
+      // Ready — find first enemy in range and lock onto its tile
+      const rangePx = rangeToPixels(towerDef.range);
+      let target = null;
+      let bestProgress = -1;
+      for (const enemy of state.enemies) {
+        if (enemy.atBase) continue;
+        const pos = getPositionAlongPath(state.segments, state.totalLength, enemy.progress);
+        if (distance({ x: site.x, y: site.y }, pos) <= rangePx && enemy.progress > bestProgress) {
+          bestProgress = enemy.progress;
+          target = enemy;
+        }
+      }
+      if (target) {
+        const pos = getPositionAlongPath(state.segments, state.totalLength, target.progress);
+        tw.breathTile = { gx: Math.floor(pos.x / TILE_SIZE), gy: Math.floor(pos.y / TILE_SIZE) };
+        tw.breathTimer = towerDef.breathDuration;
+      }
+      continue;
+    }
+
     site.tower.cooldown -= dt;
     if (site.tower.cooldown > 0) continue;
 
@@ -194,16 +267,16 @@ export function updateGame(state, dt) {
           hitAny = true;
           if (towerDef.slow) {
             enemy.slowMultiplier = 1 - towerDef.slow;
-            enemy.slowTimer = rofToSeconds(towerDef.rof) + 0.1;
+            enemy.slowTimer = fireInterval(towerDef) + 0.1;
           }
-          if (towerDef.dot) enemy.dotTimer = towerDef.dot;
+          if (towerDef.dot) { enemy.dotTimer = towerDef.dot; enemy.dotIgnoresArmor = !!towerDef.isPoisonAoE; }
           if (towerDef.damage > 0) {
-            enemy.hp -= calculateDamage(damageToHP(towerDef.damage), enemy, towerDef);
+            enemy.hp -= calculateDamage(towerDef.flatDamage ?? damageToHP(towerDef.damage), enemy, towerDef);
             enemy.flashTimer = 0.08;
           }
         }
       }
-      site.tower.cooldown = hitAny ? rofToSeconds(towerDef.rof) : 0.05;
+      site.tower.cooldown = hitAny ? fireInterval(towerDef) : 0.05;
     } else {
       // Single target: spawn a projectile toward the furthest enemy in range
       let target = null;
@@ -226,7 +299,7 @@ export function updateGame(state, dt) {
           y: site.y,
           targetId: target.id,
           speed: towerDef.projectileSpeed || 300,
-          damage: damageToHP(towerDef.damage),
+          damage: towerDef.flatDamage ?? damageToHP(towerDef.damage),
           dot: towerDef.dot || 0,
           splash: towerDef.splash || 0,
           towerType: site.tower.type,
@@ -234,9 +307,14 @@ export function updateGame(state, dt) {
           sprite: towerDef.projectileSprite || 'proj_arrow',
           angle: Math.atan2(targetPos.y - site.y, targetPos.x - site.x),
         });
-        site.tower.cooldown = rofToSeconds(towerDef.rof);
+        site.tower.cooldown = fireInterval(towerDef);
       }
     }
+  }
+
+  // ── Dev debug data ────────────────────────────────────────────
+  if (state.debugMode) {
+    state.debugData = computeDebugData(state);
   }
 
   // ── Win/Loss check ─────────────────────────────────────────────
@@ -254,12 +332,12 @@ export function updateGame(state, dt) {
 
 // ── Damage Calculation ───────────────────────────────────────────
 function calculateDamage(baseDamage, enemy, towerDef) {
-  // Siege Weapon: flame damage ignores defense entirely
-  if (enemy.flameWeakness && towerDef.isFlame) {
+  // Tree poison vs Knight: ignores armor
+  if (towerDef.isPoisonAoE && enemy.poisonArmorIgnore && BALANCE.POISON_IGNORE_ARMOR) {
     return baseDamage;
   }
-  // Apply defense reduction
-  return baseDamage * (1 - enemy.defense);
+  // Dragon flame vs Siege: direct hits still reduced by armor, but the burn DoT ignores it
+  return baseDamage * (1 - (enemy.defense || 0));
 }
 
 // ── Spawn an enemy ───────────────────────────────────────────────
@@ -274,11 +352,13 @@ function spawnEnemy(state) {
     hp: type.hp,
     maxHp: type.hp,
     speed: type.speed,
-    defense: type.defense,
+    defense: type.defense || 0,
     immunities: type.immunities || [],
-    flameWeakness: type.flameWeakness || false,
+    flameBonus: type.flameBonus || false,
+    poisonArmorIgnore: type.poisonArmorIgnore || false,
     progress: 0,
     dotTimer: 0,
+    dotIgnoresArmor: false,
     slowTimer: 0,
     slowMultiplier: 1,
     flashTimer: 0,
@@ -324,7 +404,7 @@ export function buildTower(state, siteId, towerType) {
     }
   }
 
-  site.tower = { type: towerType, cooldown: 0 };
+  site.tower = { type: towerType, cooldown: 0, breathTimer: 0, breathTile: null };
   state.gold -= towerDef.cost;
   return true;
 }
@@ -332,4 +412,33 @@ export function buildTower(state, siteId, towerType) {
 // ── Mining Gold ──────────────────────────────────────────────────
 export function awardMiningGold(state, amount) {
   state.gold = Math.min(MAX_GOLD, state.gold + amount);
+}
+
+// ── Dev Debug Overlay ────────────────────────────────────────────
+// Toggle with backtick key. Never shown to players.
+export function toggleDebug(state) {
+  state.debugMode = !state.debugMode;
+}
+
+export function computeDebugData(state) {
+  if (!state.debugMode) return null;
+
+  const towers = state.sites
+    .filter(s => s.tower)
+    .map(s => {
+      const def = TOWERS[s.tower.type];
+      const interval = rofToSeconds(def.rof);
+      const hitDmg = damageToHP(def.damage);
+      const dps = def.damage > 0 ? (hitDmg / interval).toFixed(1) : '0';
+      return { type: def.label, dps, cost: def.cost, site: s.id };
+    });
+
+  const boardCost = state.sites
+    .filter(s => s.tower)
+    .reduce((sum, s) => sum + (TOWERS[s.tower.type]?.cost || 0), 0);
+
+  // Gold/sec estimate: GOLD_PER_STRING at 20 WPM (1 string per 1.5s), 60% productive
+  const goldPerSec = (BALANCE.GOLD_PER_STRING / 1.5 * BALANCE.PRODUCTIVE_MINING_FACTOR).toFixed(1);
+
+  return { towers, boardCost, goldPerSec, gold: state.gold, baseHP: state.baseHP };
 }

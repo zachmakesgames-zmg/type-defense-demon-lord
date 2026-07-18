@@ -3,7 +3,7 @@
 // manages game modes (playing/mining/buildMenu), renders overlays
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { createGameState, updateGame, buildTower, awardMiningGold } from '../engine/GameEngine.js';
+import { createGameState, updateGame, buildTower, awardMiningGold, toggleDebug, computeDebugData } from '../engine/GameEngine.js';
 import { Renderer } from '../engine/Renderer.js';
 import { loadLevelAssets } from '../engine/AssetLoader.js';
 import { MAP_SIZE, TILE_SIZE } from '../engine/TileMap.js';
@@ -15,6 +15,7 @@ import { completeLevel } from '../utils/saveData.js';
 import HUD from './HUD.jsx';
 import MineWindow from './MineWindow.jsx';
 import BuildMenu from './BuildMenu.jsx';
+import { GoldMeterLeft, GoldMeterRight } from './GoldMeter.jsx';
 
 const CANVAS_SIZE = 1024;
 
@@ -41,6 +42,9 @@ export default function GameScreen({ world, level, onBack, onRestart }) {
   // Build menu state
   const buildRef = useRef(null);
   const [buildUI, setBuildUI] = useState(null);
+
+  // Expose assets to React render (set once after load)
+  const [assetsSnap, setAssetsSnap] = useState(null);
 
   // Board input (typing tower site codes)
   const boardInputRef = useRef('');
@@ -100,6 +104,7 @@ export default function GameScreen({ world, level, onBack, onRestart }) {
       // Store for lazy renderer creation (canvas isn't in DOM yet during loading)
       mapDataRef.current = mapData;
       assetsRef.current = assets;
+      setAssetsSnap(assets);
 
       setLoading(false);
     }
@@ -170,6 +175,9 @@ export default function GameScreen({ world, level, onBack, onRestart }) {
 
       // Prevent browser defaults
       if (e.key === 'Enter' || e.key === 'Escape') e.preventDefault();
+
+      // Dev debug overlay — backtick toggle, never shown to players
+      if (e.key === '`') { toggleDebug(state); return; }
 
       // ── Playing mode ──
       if (m === 'playing') {
@@ -359,6 +367,10 @@ export default function GameScreen({ world, level, onBack, onRestart }) {
       {/* HUD */}
       <HUD gold={hud.gold} hp={hud.hp} waveLabel={waveLabel} />
 
+      {/* Canvas + sidebars */}
+      <div className="game-canvas-row">
+        <GoldMeterLeft gold={hud.gold} isMining={mode === 'mining'} />
+
       {/* Canvas + overlays */}
       <div className="game-canvas-wrapper">
         <canvas
@@ -421,7 +433,11 @@ export default function GameScreen({ world, level, onBack, onRestart }) {
             </div>
           </div>
         )}
+
       </div>
+
+        <GoldMeterRight gold={hud.gold} assets={assetsSnap} isMining={mode === 'mining'} />
+      </div>{/* end game-canvas-row */}
 
       {/* Instructions */}
       <div className="game-instructions">
